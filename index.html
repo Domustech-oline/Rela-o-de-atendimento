@@ -150,7 +150,9 @@ button:hover{transform:translateY(-1px);}
 <br>
 <button id="btnAdd" onclick="add()">Adicionar</button>
 <button class="btnSecundario" onclick="limpar()">Limpar Tudo</button>
+<button class="btnSecundario" onclick="atualizarDaPlanilha()">🔄 Atualizar</button>
 <button class="btnVerde" onclick="visualizar()">Gerar Relatório</button>
+<div id="statusSync" style="font-size:11px;color:#78909c;margin:4px 4px;min-height:14px;"></div>
 
 <div id="lista" class="card"></div>
 </div>
@@ -164,6 +166,9 @@ button:hover{transform:translateY(-1px);}
 <script>
 let dados = [];
 let editIndex = null;
+
+// 🔗 COLE AQUI O LINK DO SEU APP DA WEB (Google Apps Script) QUANDO FOR GERADO
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzf5OBd-BjS_Z7WvYsQZv0O7TzsMBXRStv87zMAAlLw4fYc7niIWVWOMfbbpPOX1SMg/exec";
 
 const processos = {
   ENG1022:"OBRA", ENG1024:"OBRA", ENG1025:"OBRA", ENG1026:"OBRA", ENG1028:"OBRA",
@@ -197,6 +202,93 @@ function carregarLocal(){
   }
 }
 
+function planilhaConfigurada(){
+  return SCRIPT_URL && !SCRIPT_URL.includes("COLE_AQUI");
+}
+
+async function enviarParaPlanilha(item){
+  if(!planilhaConfigurada()) return;
+  mostrarStatus("🔄 Sincronizando...");
+  try{
+    await fetch(SCRIPT_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        action:"salvar",
+        item:{
+          id: item.id,
+          oc: item.oc,
+          eq: item.eq,
+          data: item.data,
+          processo: processoDe(item.eq),
+          obs: item.obs
+        }
+      })
+    });
+    mostrarStatus("✅ Sincronizado com a planilha");
+  }catch(err){
+    console.warn("Falha ao enviar para a planilha:", err);
+    mostrarStatus("⚠️ Sem conexão — salvo só localmente");
+  }
+}
+
+async function excluirDaPlanilha(item){
+  if(!planilhaConfigurada()) return;
+  try{
+    await fetch(SCRIPT_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"text/plain;charset=utf-8" },
+      body: JSON.stringify({ action:"excluir", item: item })
+    });
+  }catch(err){
+    console.warn("Falha ao excluir na planilha:", err);
+  }
+}
+
+async function carregarDaPlanilha(mostrarAlerta){
+  if(!planilhaConfigurada()) return false;
+  mostrarStatus("🔄 Carregando dados da planilha...");
+  try{
+    let resp = await fetch(SCRIPT_URL);
+    let json = await resp.json();
+    if(Array.isArray(json)){
+      dados = json.map(r => ({
+        id: r.ID || r.id,
+        oc: r.OC || r.oc,
+        eq: r.Equipe || r.eq,
+        data: r.Data || r.data,
+        obs: r["Observação"] || r.obs || ""
+      }));
+      salvarLocal();
+      render();
+      mostrarStatus("✅ Dados atualizados da planilha");
+      if(mostrarAlerta) alert("Dados atualizados a partir da planilha!");
+      return true;
+    }
+  }catch(err){
+    console.warn("Falha ao carregar da planilha, usando dados locais:", err);
+    mostrarStatus("⚠️ Sem conexão — mostrando dados locais");
+  }
+  return false;
+}
+
+async function atualizarDaPlanilha(){
+  if(!planilhaConfigurada()){
+    alert("Configure o link do Google Planilhas no código (SCRIPT_URL) para usar essa função.");
+    return;
+  }
+  let ok = await carregarDaPlanilha(true);
+  if(!ok) alert("Não foi possível conectar à planilha. Verifique sua internet.");
+}
+
+function mostrarStatus(msg){
+  let el = document.getElementById("statusSync");
+  if(!el) return;
+  el.innerText = msg;
+  clearTimeout(window._statusTimeout);
+  window._statusTimeout = setTimeout(()=>{ el.innerText = ""; }, 4000);
+}
+
 eq.addEventListener("input", () => {
   let p = processoDe(eq.value.trim().toUpperCase());
   procoDisplay.value = eq.value ? p : "";
@@ -228,6 +320,7 @@ async function add(){
   salvarLocal();
   render();
   limparCampos();
+  enviarParaPlanilha(item);
 }
 
 function editar(i){
@@ -255,9 +348,11 @@ function limpar(){
 
 function excluir(i){
   if(!confirm("Excluir esta ocorrência?")) return;
+  let item = dados[i];
   dados.splice(i,1);
   salvarLocal();
   render();
+  excluirDaPlanilha(item);
 }
 
 function formatarDataBR(dataISO){
@@ -488,7 +583,10 @@ function gerar(){
   });
 }
 
-carregarLocal();
+(async function iniciar(){
+  let sincronizado = await carregarDaPlanilha(false);
+  if(!sincronizado) carregarLocal();
+})();
 </script>
 </body>
 </html>
