@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>App Ocorrências - TP-LV Energy</title>
 <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#edf2f7;padding:8px;}
@@ -25,6 +26,8 @@ button{
 button:hover{transform:translateY(-1px);}
 .btnSecundario{background:#78909c;}
 .btnVerde{background:#00B050;}
+.btnPdf{background:#003A8F;}
+.btnPdf:disabled{opacity:.6;cursor:wait;transform:none;}
 .card{background:#fff;border-radius:20px;box-shadow:0 10px 25px rgba(0,0,0,.08);margin-top:14px;overflow:hidden;padding:6px;}
 #tela2{display:none;}
 .listaItem{display:flex;justify-content:space-between;align-items:center;padding:12px;border-bottom:1px solid #eee;gap:8px;}
@@ -160,6 +163,8 @@ button:hover{transform:translateY(-1px);}
 <div id="tela2">
 <button class="btnSecundario" onclick="voltar()">← Voltar</button>
 <button class="btnVerde" onclick="gerar()">📷 Gerar Imagem</button>
+<button class="btnPdf" id="btnPdf" onclick="gerarPDF()">📄 Gerar PDF</button>
+<div id="statusPdf" style="font-size:11px;color:#78909c;margin:4px 4px;min-height:14px;"></div>
 <div id="relatorio" class="card"></div>
 </div>
 
@@ -198,6 +203,7 @@ function carregarLocal(){
   let salvo = localStorage.getItem("dadosOcorrenciasTPLV");
   if(salvo){
     dados = JSON.parse(salvo);
+    dados.forEach(d => d.data = normalizarData(d.data));
     render();
   }
 }
@@ -256,7 +262,7 @@ async function carregarDaPlanilha(mostrarAlerta){
         id: r.ID || r.id,
         oc: r.OC || r.oc,
         eq: r.Equipe || r.eq,
-        data: r.Data || r.data,
+        data: normalizarData(r.Data || r.data),
         obs: r["Observação"] || r.obs || ""
       }));
       salvarLocal();
@@ -305,7 +311,7 @@ async function add(){
     id: idAtual,
     oc: oc.value.trim(),
     eq: eq.value.trim().toUpperCase(),
-    data: dataOc.value,
+    data: normalizarData(dataOc.value),
     obs: obs.value.trim()
   };
 
@@ -355,9 +361,24 @@ function excluir(i){
   excluirDaPlanilha(item);
 }
 
+function normalizarData(valor){
+  // Corrige datas que chegam da planilha como Date/ISO completo
+  // (ex: "2026-07-03T03:00:00.000Z") deixando sempre no formato "AAAA-MM-DD"
+  if(!valor) return "";
+  let s = String(valor).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // formato brasileiro DD/MM/AAAA vindo de alguma célula formatada
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return s;
+}
+
 function formatarDataBR(dataISO){
   if(!dataISO) return "-";
-  let [ano,mes,dia] = dataISO.split("-");
+  let iso = normalizarData(dataISO);
+  let [ano,mes,dia] = iso.split("-");
+  if(!dia) return "-";
   return `${dia}/${mes}`;
 }
 
@@ -527,6 +548,15 @@ function visualizar(){
     ${linhaTotal}
   </div>
 
+ <div class="blocoTitulo">OCS ATENDIDAS POR DIA E POR PROCESSO</div>
+  <div class="tabela">
+    <div class="linha topoTabela">
+      <div>DIA</div><div>OBRA</div><div>MANUTENÇÃO</div><div>LINHA VIVA</div><div>TOTAL</div>
+    </div>
+    ${linhasTabela}
+    ${linhaTotal}
+  </div>
+
   <div class="cards">
     <div class="cardResumo"><div class="cardIcone">📋</div><div class="cardTexto"><span>Total de OCs</span><strong>${totalGeral}</strong></div></div>
     <div class="cardResumo"><div class="cardIcone">🏗️</div><div class="cardTexto"><span>Obra</span><strong>${totalProcesso.OBRA}</strong><small>${pctG(totalProcesso.OBRA)}</small></div></div>
@@ -535,7 +565,7 @@ function visualizar(){
     <div class="cardResumo"><div class="cardIcone">👥</div><div class="cardTexto"><span>Equipes Ativas</span><strong>${equipesAtivas}</strong></div></div>
   </div>
 
-  <div class="blocoDupla">
+ <div class="blocoDupla">
     <div class="painel">
       <div class="painelTitulo">DISTRIBUIÇÃO POR PROCESSO</div>
       <div class="donutWrap">
@@ -570,6 +600,80 @@ function visualizar(){
 function voltar(){
   tela1.style.display="block";
   tela2.style.display="none";
+}
+
+async function gerarPDF(){
+  let botao = document.getElementById("btnPdf");
+  let statusEl = document.getElementById("statusPdf");
+  botao.disabled = true;
+  botao.innerText = "⏳ Gerando PDF...";
+  if(statusEl) statusEl.innerText = "🔄 Montando relatório em PDF...";
+  window.scrollTo(0,0);
+
+  try{
+    const { jsPDF } = window.jspdf;
+
+    let canvas = await html2canvas(relatorio, {
+      scale: 3,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      allowTaint: true,
+      logging: false
+    });
+
+    // Config da página A4 em mm
+    let pdf = new jsPDF("p", "mm", "a4");
+    let larguraPagina = pdf.internal.pageSize.getWidth();
+    let alturaPagina = pdf.internal.pageSize.getHeight();
+
+    // Converte a largura do canvas (px) para a largura útil da página (mm)
+    let larguraImgMm = larguraPagina;
+    let alturaImgMm = (canvas.height * larguraImgMm) / canvas.width;
+
+    // Quantos pixels do canvas cabem em uma página de PDF
+    let pxPorPaginaPdf = Math.floor((alturaPagina * canvas.width) / larguraImgMm);
+
+    let totalPaginas = Math.ceil(canvas.height / pxPorPaginaPdf);
+
+    for(let pagina = 0; pagina < totalPaginas; pagina++){
+      let alturaFatia = Math.min(pxPorPaginaPdf, canvas.height - pagina*pxPorPaginaPdf);
+
+      let canvasFatia = document.createElement("canvas");
+      canvasFatia.width = canvas.width;
+      canvasFatia.height = alturaFatia;
+
+      let ctx = canvasFatia.getContext("2d");
+      // Preenche o fundo (evita fatia transparente/preta em navegadores diferentes)
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0,0,canvasFatia.width, canvasFatia.height);
+      ctx.drawImage(
+        canvas,
+        0, pagina*pxPorPaginaPdf, canvas.width, alturaFatia,
+        0, 0, canvas.width, alturaFatia
+      );
+
+      let imgFatia = canvasFatia.toDataURL("image/png");
+      let alturaFatiaMm = (alturaFatia * larguraImgMm) / canvas.width;
+
+      if(pagina > 0) pdf.addPage();
+      pdf.addImage(imgFatia, "PNG", 0, 0, larguraImgMm, alturaFatiaMm);
+    }
+
+    let agora = new Date();
+    let nomeArquivo = `relatorio_tplv_${agora.toISOString().split("T")[0]}.pdf`;
+    pdf.save(nomeArquivo);
+
+    if(statusEl) statusEl.innerText = "✅ PDF gerado com sucesso!";
+  }catch(err){
+    console.error("Erro ao gerar PDF:", err);
+    if(statusEl) statusEl.innerText = "⚠️ Não foi possível gerar o PDF.";
+    alert("Ocorreu um erro ao gerar o PDF. Tente novamente.");
+  }finally{
+    botao.disabled = false;
+    botao.innerText = "📄 Gerar PDF";
+    clearTimeout(window._statusPdfTimeout);
+    window._statusPdfTimeout = setTimeout(()=>{ if(statusEl) statusEl.innerText = ""; }, 4000);
+  }
 }
 
 function gerar(){
