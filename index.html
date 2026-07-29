@@ -408,11 +408,20 @@ function render(){
   }).join("");
 }
 
+let _gerandoRelatorio = false;
+
 function visualizar(){
+  if(_gerandoRelatorio) return; // evita clique duplo/duplo disparo gerando o relatório 2x
+  _gerandoRelatorio = true;
+  setTimeout(()=>{ _gerandoRelatorio = false; }, 600);
+
   if(dados.length===0){
     alert("Cadastre ao menos uma ocorrência antes de gerar o relatório.");
+    _gerandoRelatorio = false;
     return;
   }
+
+  relatorio.innerHTML = ""; // garante que não sobre nenhum conteúdo antigo antes de montar de novo
 
   // ordena por data e descobre intervalo do período
   let comData = dados.filter(d=>d.data).sort((a,b)=> a.data.localeCompare(b.data));
@@ -526,7 +535,7 @@ function visualizar(){
   let agora = new Date();
   let periodoTexto = `${formatarDataBR(dataMin)} a ${formatarDataBR(dataMax)}`;
 
-  relatorio.innerHTML = `
+relatorio.innerHTML = `
   <div class="cabecalhoRelatorio">
     <div class="topoFlex">
       <div class="logoEsquerda">⚡</div>
@@ -540,15 +549,6 @@ function visualizar(){
   </div>
 
   <div class="blocoTitulo">OCS ATENDIDAS POR DIA E POR PROCESSO</div>
-  <div class="tabela">
-    <div class="linha topoTabela">
-      <div>DIA</div><div>OBRA</div><div>MANUTENÇÃO</div><div>LINHA VIVA</div><div>TOTAL</div>
-    </div>
-    ${linhasTabela}
-    ${linhaTotal}
-  </div>
-
- <div class="blocoTitulo">OCS ATENDIDAS POR DIA E POR PROCESSO</div>
   <div class="tabela">
     <div class="linha topoTabela">
       <div>DIA</div><div>OBRA</div><div>MANUTENÇÃO</div><div>LINHA VIVA</div><div>TOTAL</div>
